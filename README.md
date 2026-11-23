@@ -438,3 +438,23 @@ Stay Focused and Keep Building
 `rig-meta-factory` extends upstream [disler/super-simple-software-factory](https://github.com/disler/super-simple-software-factory) with a local-first BAMA CLI (`rmf`) and stdio MCP server (`rmf mcp`) for governing empty factory templates, stamped SSSF factories, per-factory owner agents and changelogs, feature backports, factory-to-factory mailbox routing, lead-agent status/cron rollups, Gate-D human approvals, and TAC missions via `rig-tac-os`.
 
 See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the architecture, schema, CLI/MCP contract, and verification steps.
+
+---
+
+## RIG Meta Factory (`rmf`)
+
+Fork of [disler/super-simple-software-factory](https://github.com/disler/super-simple-software-factory) (credit: IndyDevDan, "The Meta Software Factory"). It adds a factory that builds factories: a BAMA-compliant CLI plus a stdio MCP server, backed by a SQLite registry.
+
+- `template` / `factory`: template store with revisions, factory CRUD, and SSSF stamping
+- `owner`: a mission for each factory's owner agent, plus an append-only changelog
+- `backport`: capture a factory diff, apply it to the template, then propagate it to sibling factories (needs Gate-D approval)
+- `mailbox`: messages between factories; `lead`: fleet status and cron registry
+- `tac`: rig-tac-os bridge that runs plan, SHIP-STOP, run, verify, then receipt. The verifier must not be the builder, and the receipt SHA is linked to the changelog.
+- `gate`: Gate-D approval queue, matched by SHA-256; `rmf mcp` exposes every command as an MCP tool
+
+```
+uv venv .venv && uv pip install -e '.[dev]'
+.venv/bin/rmf help
+.venv/bin/pytest -q
+```
+Blueprint: `docs/BLUEPRINT.md`.
