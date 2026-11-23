@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/pytest*)",
+      "Bash(.venv/bin/rmf*)",
+      "Bash(.venv/bin/python3*)",
+      "Bash(python3*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git tag*)",
+      "Bash(git rev-parse*)",
+      "Bash(uv *)",
+      "Bash(bash /Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh*)",
+      "Bash(bama audit-cli*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /*)",
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)"
+    ]
+  }
+}

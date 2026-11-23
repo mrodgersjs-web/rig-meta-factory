@@ -1,0 +1,229 @@
+"""BAMA-compliant CLI entry point for rig-meta-factory (`rmf`)."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sqlite3
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Sequence
+
+from rig_meta_factory import __version__
+from rig_meta_factory.errors import (
+    EXIT_OK,
+    RmfError,
+    RuntimeRmfError,
+    UsageRmfError,
+    emit_json_error,
+)
+
+
+def _default_db_path() -> Path:
+    env_db = os.environ.get("RMF_DB_PATH", "").strip()
+    if env_db:
+        return Path(env_db).expanduser()
+    app_store = os.environ.get("APP_STORE", "").strip()
+    if app_store:
+        return Path(f"{app_store}.db").expanduser()
+    return Path("~/.rig/meta-factory/registry.db").expanduser()
+
+
+class RmfArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that raises UsageRmfError instead of printing to stderr and exiting."""
+
+    def error(self, message: str) -> None:  # pragma: no cover - exercised via CLI
+        raise UsageRmfError(message, code="USAGE_ERROR")
+
+
+@dataclass(frozen=True)
+class CommandSpec:
+    name: str
+    mcp_name: str
+    summary: str
+    example: str
+    read_only: bool
+    destructive: bool
+    properties: dict[str, dict[str, Any]]
+    required: list[str]
+    handler: Callable[[dict[str, Any]], dict[str, Any]]
+
+    @property
+    def description(self) -> str:
+        return f"{self.summary} Example: {self.example}"
+
+    def to_schema_entry(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "mcp_name": self.mcp_name,
+            "description": self.description,
+            "example": self.example,
+            "read_only": self.read_only,
+            "readOnly": self.read_only,
+            "destructive": self.destructive,
+            "required": list(self.required),
+            "inputSchema": {
+                "type": "object",
+                "properties": self.properties,
+                "required": list(self.required),
+            },
+        }
+
+
+def _handle_status(_params: dict[str, Any]) -> dict[str, Any]:
+    db_path = _default_db_path()
+    schema_version = 0
+    counts: dict[str, int] = {
+        "templates": 0,
+        "factories": 0,
+        "pending_approvals": 0,
+    }
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path))
+            try:
+                cur = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+                )
+                if cur.fetchone() is not None:
+                    row = conn.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()
+                    schema_version = int(row[0]) if row else 0
+                for key, table, where in (
+                    ("templates", "templates", ""),
+                    ("factories", "factories", ""),
+                    ("pending_approvals", "gate_approvals", " WHERE status = 'pending'"),
+                ):
+                    tcur = conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                        (table,),
+                    )
+                    if tcur.fetchone() is not None:
+                        crow = conn.execute(f"SELECT COUNT(*) FROM {table}{where}").fetchone()
+                        counts[key] = int(crow[0]) if crow else 0
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            raise RuntimeRmfError(f"Failed reading SQLite status: {exc}") from exc
+    return {
+        "ok": True,
+        "version": __version__,
+        "db_path": str(db_path),
+        "schema_version": schema_version,
+        "counts": counts,
+    }
+
+
+def get_command_specs() -> list[CommandSpec]:
+    return [
+        CommandSpec(
+            name="status",
+            mcp_name="rmf_status",
+            summary="Show rig-meta-factory health, DB path, schema version, and counts.",
+            example="rmf status --json",
+            read_only=True,
+            destructive=False,
+            properties={},
+            required=[],
+            handler=_handle_status,
+        ),
+        CommandSpec(
+            name="schema",
+            mcp_name="rmf_schema",
+            summary="Emit the machine-readable BAMA command manifest.",
+            example="rmf schema --json",
+            read_only=True,
+            destructive=False,
+            properties={},
+            required=[],
+            handler=lambda _params: build_schema_manifest(),
+        ),
+    ]
+
+
+def build_schema_manifest() -> dict[str, Any]:
+    specs = get_command_specs()
+    return {
+        "name": "rmf",
+        "version": __version__,
+        "commands": [spec.to_schema_entry() for spec in specs],
+    }
+
+
+def _format_human_help() -> str:
+    lines = [
+        f"rmf {__version__} - BAMA-compliant meta-factory CLI and stdio MCP server",
+        "",
+        "Usage:",
+        "  rmf <command> [options] [--json]",
+        "  rmf help [--json]",
+        "",
+        "Commands:",
+    ]
+    for spec in get_command_specs():
+        ro = "read-only" if spec.read_only else ("destructive/Gate-D" if spec.destructive else "write")
+        lines.append(f"  {spec.name:<24} [{ro}] {spec.summary}")
+        lines.append(f"    Example: {spec.example}")
+    return "\n".join(lines)
+
+
+def _emit_output(payload: dict[str, Any], as_json: bool) -> int:
+    if as_json:
+        sys.stdout.write(json.dumps(payload, sort_keys=True) + "\n")
+    else:
+        sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    sys.stdout.flush()
+    return EXIT_OK
+
+
+def _dispatch(tokens: list[str], as_json: bool) -> int:
+    if not tokens or tokens[0] in ("help", "-h", "--help"):
+        if len(tokens) > 1:
+            raise UsageRmfError(f"Unexpected arguments after help: {' '.join(tokens[1:])}")
+        if as_json:
+            return _emit_output(build_schema_manifest(), as_json=True)
+        sys.stdout.write(_format_human_help() + "\n")
+        sys.stdout.flush()
+        return EXIT_OK
+
+    cmd_head = tokens[0]
+    rest = tokens[1:]
+
+    if cmd_head == "status":
+        parser = RmfArgumentParser(prog="rmf status", add_help=False)
+        parser.parse_args(rest)
+        return _emit_output(_handle_status({}), as_json=as_json)
+
+    if cmd_head == "schema":
+        parser = RmfArgumentParser(prog="rmf schema", add_help=False)
+        parser.parse_args(rest)
+        return _emit_output(build_schema_manifest(), as_json=as_json)
+
+    raise UsageRmfError(f"Unknown command: {' '.join(tokens)}", code="USAGE_ERROR")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    as_json = "--json" in raw_args
+    filtered = [arg for arg in raw_args if arg != "--json"]
+
+    try:
+        return _dispatch(filtered, as_json=as_json)
+    except RmfError as err:
+        if as_json:
+            return emit_json_error(err, stream=sys.stdout)
+        sys.stderr.write(f"error [{err.code}]: {err.message}\n")
+        sys.stderr.flush()
+        return err.exit_code
+    except Exception as exc:  # pragma: no cover - defensive runtime wrapper
+        wrapped = RuntimeRmfError(str(exc))
+        if as_json:
+            return emit_json_error(wrapped, stream=sys.stdout)
+        sys.stderr.write(f"error [{wrapped.code}]: {wrapped.message}\n")
+        sys.stderr.flush()
+        return wrapped.exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

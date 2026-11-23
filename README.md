@@ -429,3 +429,12 @@ Follow the [IndyDevDan YouTube channel](https://www.youtube.com/@indydevdan) to 
 Stay Focused and Keep Building
 
 - IndyDevDan
+
+
+---
+
+## RIG Meta Factory (`rmf`)
+
+`rig-meta-factory` extends upstream [disler/super-simple-software-factory](https://github.com/disler/super-simple-software-factory) with a local-first BAMA CLI (`rmf`) and stdio MCP server (`rmf mcp`) for governing empty factory templates, stamped SSSF factories, per-factory owner agents and changelogs, feature backports, factory-to-factory mailbox routing, lead-agent status/cron rollups, Gate-D human approvals, and TAC missions via `rig-tac-os`.
+
+See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the architecture, schema, CLI/MCP contract, and verification steps.
