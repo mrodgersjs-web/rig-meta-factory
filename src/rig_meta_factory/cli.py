@@ -1,4 +1,9 @@
-"""BAMA-compliant CLI entry point for rig-meta-factory (`rmf`)."""
+"""BAMA-compliant CLI entry point for rig-meta-factory (`rmf`).
+
+Commands are declared as :class:`CommandSpec` entries (name, flags, handler). The same
+specs drive argparse parsing, ``rmf schema``/``rmf help --json`` and the MCP tools, so the
+CLI and MCP server always expose exactly the same surface.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,7 @@ import json
 import os
 import sqlite3
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -39,16 +44,48 @@ class RmfArgumentParser(argparse.ArgumentParser):
 
 
 @dataclass(frozen=True)
+class FlagSpec:
+    """One CLI flag. ``name`` is the snake_case parameter name (flag is ``--name-with-dashes``)."""
+
+    name: str
+    type: str = "string"  # string | integer | boolean
+    required: bool = False
+    description: str = ""
+    default: Any = None
+    choices: tuple[str, ...] | None = None
+
+    @property
+    def flag(self) -> str:
+        return "--" + self.name.replace("_", "-")
+
+    def schema(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"type": self.type, "description": self.description or self.name}
+        if self.choices:
+            out["enum"] = list(self.choices)
+        return out
+
+
+@dataclass(frozen=True)
 class CommandSpec:
     name: str
-    mcp_name: str
     summary: str
     example: str
     read_only: bool
-    destructive: bool
-    properties: dict[str, dict[str, Any]]
-    required: list[str]
     handler: Callable[[dict[str, Any]], dict[str, Any]]
+    flags: tuple[FlagSpec, ...] = field(default_factory=tuple)
+    destructive: bool = False
+
+    @property
+    def mcp_name(self) -> str:
+        return "rmf_" + self.name.replace(" ", "_").replace("-", "_")
+
+    @property
+    def required(self) -> list[str]:
+        return [f.name for f in self.flags if f.required]
+
+    @property
+    def properties(self) -> dict[str, dict[str, Any]]:
+        return {f.name: f.schema() for f in self.flags}
 
     @property
     def description(self) -> str:
@@ -63,11 +100,11 @@ class CommandSpec:
             "read_only": self.read_only,
             "readOnly": self.read_only,
             "destructive": self.destructive,
-            "required": list(self.required),
+            "required": self.required,
             "inputSchema": {
                 "type": "object",
                 "properties": self.properties,
-                "required": list(self.required),
+                "required": self.required,
             },
         }
 
@@ -75,15 +112,13 @@ class CommandSpec:
 def _handle_status(_params: dict[str, Any]) -> dict[str, Any]:
     db_path = _default_db_path()
     schema_version = 0
-    counts: dict[str, int] = {
-        "templates": 0,
-        "factories": 0,
-        "pending_approvals": 0,
-    }
+    counts: dict[str, int] = {"templates": 0, "factories": 0, "pending_approvals": 0}
+    wal = False
     if db_path.exists():
         try:
             conn = sqlite3.connect(str(db_path))
             try:
+                wal = str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() == "wal"
                 cur = conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
                 )
@@ -95,10 +130,7 @@ def _handle_status(_params: dict[str, Any]) -> dict[str, Any]:
                     ("factories", "factories", ""),
                     ("pending_approvals", "gate_approvals", " WHERE status = 'pending'"),
                 ):
-                    tcur = conn.execute(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                        (table,),
-                    )
+                    tcur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
                     if tcur.fetchone() is not None:
                         crow = conn.execute(f"SELECT COUNT(*) FROM {table}{where}").fetchone()
                         counts[key] = int(crow[0]) if crow else 0
@@ -111,35 +143,41 @@ def _handle_status(_params: dict[str, Any]) -> dict[str, Any]:
         "version": __version__,
         "db_path": str(db_path),
         "schema_version": schema_version,
+        "wal": wal,
         "counts": counts,
     }
 
 
-def get_command_specs() -> list[CommandSpec]:
+def _core_specs() -> list[CommandSpec]:
     return [
         CommandSpec(
             name="status",
-            mcp_name="rmf_status",
             summary="Show rig-meta-factory health, DB path, schema version, and counts.",
             example="rmf status --json",
             read_only=True,
-            destructive=False,
-            properties={},
-            required=[],
             handler=_handle_status,
         ),
         CommandSpec(
             name="schema",
-            mcp_name="rmf_schema",
             summary="Emit the machine-readable BAMA command manifest.",
             example="rmf schema --json",
             read_only=True,
-            destructive=False,
-            properties={},
-            required=[],
             handler=lambda _params: build_schema_manifest(),
         ),
     ]
+
+
+def _module_specs() -> list[CommandSpec]:
+    """Collect specs from domain modules (imported lazily to avoid import cycles)."""
+    specs: list[CommandSpec] = []
+    from rig_meta_factory import command_defs
+
+    specs.extend(command_defs.all_specs())
+    return specs
+
+
+def get_command_specs() -> list[CommandSpec]:
+    return _core_specs() + _module_specs()
 
 
 def build_schema_manifest() -> dict[str, Any]:
@@ -156,8 +194,8 @@ def _format_human_help() -> str:
         f"rmf {__version__} - BAMA-compliant meta-factory CLI and stdio MCP server",
         "",
         "Usage:",
-        "  rmf <command> [options] [--json]",
-        "  rmf help [--json]",
+        "  rmf <noun> <verb> [flags] [--json]",
+        "  rmf status|schema|help|mcp [--json]",
         "",
         "Commands:",
     ]
@@ -165,6 +203,7 @@ def _format_human_help() -> str:
         ro = "read-only" if spec.read_only else ("destructive/Gate-D" if spec.destructive else "write")
         lines.append(f"  {spec.name:<24} [{ro}] {spec.summary}")
         lines.append(f"    Example: {spec.example}")
+    lines.append(f"  {'mcp':<24} [server] Run the stdio JSON-RPC 2.0 MCP server. Example: rmf mcp")
     return "\n".join(lines)
 
 
@@ -177,6 +216,47 @@ def _emit_output(payload: dict[str, Any], as_json: bool) -> int:
     return EXIT_OK
 
 
+def _find_spec(tokens: list[str]) -> tuple[CommandSpec, list[str]] | None:
+    specs = {s.name: s for s in get_command_specs()}
+    if len(tokens) >= 2 and f"{tokens[0]} {tokens[1]}" in specs:
+        return specs[f"{tokens[0]} {tokens[1]}"], tokens[2:]
+    if tokens and tokens[0] in specs:
+        return specs[tokens[0]], tokens[1:]
+    return None
+
+
+def parse_params(spec: CommandSpec, rest: list[str]) -> dict[str, Any]:
+    parser = RmfArgumentParser(prog=f"rmf {spec.name}", add_help=False)
+    for f in spec.flags:
+        kwargs: dict[str, Any] = {"dest": f.name}
+        if f.type == "boolean":
+            kwargs["action"] = "store_true"
+            kwargs["default"] = bool(f.default)
+        else:
+            kwargs["default"] = f.default
+            if f.type == "integer":
+                kwargs["type"] = int
+            if f.choices:
+                kwargs["choices"] = list(f.choices)
+        parser.add_argument(f.flag, **kwargs)
+    ns = parser.parse_args(rest)
+    params = vars(ns)
+    missing = [f.flag for f in spec.flags if f.required and params.get(f.name) in (None, "")]
+    if missing:
+        raise UsageRmfError(f"Missing required flag(s): {', '.join(missing)}")
+    return params
+
+
+def run_command(spec: CommandSpec, params: dict[str, Any]) -> dict[str, Any]:
+    """Validate required params and invoke the handler (shared by CLI and MCP)."""
+    full = {f.name: f.default for f in spec.flags}
+    full.update({k: v for k, v in params.items() if v is not None})
+    missing = [f.name for f in spec.flags if f.required and full.get(f.name) in (None, "")]
+    if missing:
+        raise UsageRmfError(f"Missing required parameter(s): {', '.join(missing)}")
+    return spec.handler(full)
+
+
 def _dispatch(tokens: list[str], as_json: bool) -> int:
     if not tokens or tokens[0] in ("help", "-h", "--help"):
         if len(tokens) > 1:
@@ -187,20 +267,17 @@ def _dispatch(tokens: list[str], as_json: bool) -> int:
         sys.stdout.flush()
         return EXIT_OK
 
-    cmd_head = tokens[0]
-    rest = tokens[1:]
+    if tokens[0] == "mcp":
+        from rig_meta_factory.mcp_server import serve_mcp
 
-    if cmd_head == "status":
-        parser = RmfArgumentParser(prog="rmf status", add_help=False)
-        parser.parse_args(rest)
-        return _emit_output(_handle_status({}), as_json=as_json)
+        return serve_mcp()
 
-    if cmd_head == "schema":
-        parser = RmfArgumentParser(prog="rmf schema", add_help=False)
-        parser.parse_args(rest)
-        return _emit_output(build_schema_manifest(), as_json=as_json)
-
-    raise UsageRmfError(f"Unknown command: {' '.join(tokens)}", code="USAGE_ERROR")
+    found = _find_spec(tokens)
+    if found is None:
+        raise UsageRmfError(f"Unknown command: {' '.join(tokens)}", code="USAGE_ERROR")
+    spec, rest = found
+    params = parse_params(spec, rest)
+    return _emit_output(run_command(spec, params), as_json=as_json)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
