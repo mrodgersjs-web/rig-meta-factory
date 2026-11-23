@@ -53,10 +53,11 @@ class FlagSpec:
     description: str = ""
     default: Any = None
     choices: tuple[str, ...] | None = None
+    cli_flag: str | None = None  # override, e.g. "--from" for parameter from_factory
 
     @property
     def flag(self) -> str:
-        return "--" + self.name.replace("_", "-")
+        return self.cli_flag or "--" + self.name.replace("_", "-")
 
     def schema(self) -> dict[str, Any]:
         out: dict[str, Any] = {"type": self.type, "description": self.description or self.name}
