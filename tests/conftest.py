@@ -57,3 +57,13 @@ def run_subprocess(*args: str, env: dict[str, str] | None = None, input_text: st
         input=input_text,
         check=False,
     )
+
+
+def make_factories(rmf: "Rmf", tmp_path: Path, *slugs: str) -> Path:
+    """Template ``base`` plus one stamped factory per slug; returns the last factory's repo path."""
+    code, out = rmf("template", "init", "--slug", "base", "--name", "B", "--root", str(tmp_path / "tpl"))
+    assert code == 0, out
+    for slug in slugs:
+        code, out = rmf("factory", "create", "--slug", slug, "--name", slug, "--template", "base", "--dest", str(tmp_path / slug))
+        assert code == 0, out
+    return tmp_path / slugs[-1]
