@@ -435,15 +435,7 @@ Stay Focused and Keep Building
 
 ## RIG Meta Factory (`rmf`)
 
-`rig-meta-factory` extends upstream [disler/super-simple-software-factory](https://github.com/disler/super-simple-software-factory) with a local-first BAMA CLI (`rmf`) and stdio MCP server (`rmf mcp`) for governing empty factory templates, stamped SSSF factories, per-factory owner agents and changelogs, feature backports, factory-to-factory mailbox routing, lead-agent status/cron rollups, Gate-D human approvals, and TAC missions via `rig-tac-os`.
-
-See [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md) for the architecture, schema, CLI/MCP contract, and verification steps.
-
----
-
-## RIG Meta Factory (`rmf`)
-
-Fork of [disler/super-simple-software-factory](https://github.com/disler/super-simple-software-factory) (credit: IndyDevDan, "The Meta Software Factory"). It adds a factory that builds factories: a BAMA-compliant CLI plus a stdio MCP server, backed by a SQLite registry.
+`rig-meta-factory` is a fork of [disler/super-simple-software-factory](https://github.com/disler/super-simple-software-factory) (credit: IndyDevDan, "The Meta Software Factory"). Upstream stamps one factory. This fork adds the factory that builds factories: a local-first BAMA CLI (`rmf`) and a stdio MCP server (`rmf mcp`), backed by a SQLite registry.
 
 - `template` / `factory`: template store with revisions, factory CRUD, and SSSF stamping
 - `owner`: a mission for each factory's owner agent, plus an append-only changelog
@@ -452,9 +444,26 @@ Fork of [disler/super-simple-software-factory](https://github.com/disler/super-s
 - `tac`: rig-tac-os bridge that runs plan, SHIP-STOP, run, verify, then receipt. The verifier must not be the builder, and the receipt SHA is linked to the changelog.
 - `gate`: Gate-D approval queue, matched by SHA-256; `rmf mcp` exposes every command as an MCP tool
 
-```
-uv venv .venv && uv pip install -e '.[dev]'
+### Install
+
+```bash
+uv venv .venv --python python3
+uv pip install --python .venv/bin/python -e ".[dev]"
 .venv/bin/rmf help
 .venv/bin/pytest -q
 ```
-Blueprint: `docs/BLUEPRINT.md`.
+
+### Stamp a factory
+
+```bash
+.venv/bin/rmf template init --slug base --name 'Base Factory' --root ./base-template --json
+.venv/bin/rmf factory create --slug f1 --name 'Factory One' --template base --dest ./f1 --json
+.venv/bin/rmf owner set --factory f1 --agent owner-1 --mission 'Ship reliable builds' --json
+.venv/bin/rmf lead status --json
+```
+
+Every command takes `--json` and prints one JSON object; `rmf help <noun>` and `rmf <noun> <verb> --help` describe one noun or one command. Exit codes: `0` ok (or dry-run), `1` runtime failure, `2` usage, `3` policy (Gate-D, SHIP-STOP, self-verify), `4` not found. Deleting a factory or propagating a backport needs `--yes` plus an approved Gate-D row whose SHA-256 matches the payload.
+
+`rmf` needs `uv` to stamp factories and `rig-tac-os` only for the `tac` commands (first on `PATH`, else `~/.rig/bin/rig-tac-os`). Override with `RMF_SSSF_SOURCE`, `RMF_TAC_BIN`, `RMF_UV_BIN`, `RMF_DB_PATH`, `RMF_ORCA_BIN`; see `.env.example`. `tac run` and `tac verify` need the Orca app running and the factory registered with it (`orca repo add --path <factory repo>`); `rmf` checks both first and names the fix. `tac run` then waits for the builder command to print its own exit line (up to `RMF_TAC_WAIT_SECONDS`, default 900) and reports `builder.exit_code`, because `rig-tac-os run --wait` on its own returns as soon as the typed command is echoed. `tac plan --model <route>` picks the builder's model route when the `rig-tac-os` default route is not the one to use (the route must answer: `tac run` waits for the builder, it does not probe the model). A builder still running when the wait limit ends leaves the mission `failed` with `TAC_BUILDER_TIMEOUT`; `rmf tac await --id <mission> --terminal <terminal>` waits for it again and moves the mission to `ran` when it exits. `tac run` never starts a second builder for a mission that already has a run record (exit `2`): re-attach with `tac await`, also after an interrupted run. A builder terminal that ended without an exit line (closed or killed) is reported at once as `TAC_BUILDER_TERMINAL_GONE`.
+
+Blueprint: [`blueprints/rig-meta-factory-blueprint.md`](blueprints/rig-meta-factory-blueprint.md).

@@ -24,7 +24,7 @@
 1. Provide a BAMA-compliant CLI (`rmf <noun> <verb> --json`, exit codes `0`–`4`, structured JSON error envelope on stdout, destructive dry-run without `--yes`) and stdio MCP server (`rmf mcp`).
 2. Store all meta-factory state in a single local SQLite database in WAL mode (`RMF_DB_PATH`) with idempotent schema migrations.
 3. Manage a canonical versioned empty factory template (`templates` + `template_revisions`) with SHA-256 file manifests.
-4. Support full CRUD for factories stamped from a pinned template revision, reusing the local SSSF stamping flow (`/Users/rig128gb/.aside/u/0/repos/disler/super-simple-software-factory/.claude/skills/sssf`).
+4. Support full CRUD for factories stamped from a pinned template revision, reusing the local SSSF stamping flow (`~/.aside/u/0/repos/disler/super-simple-software-factory/.claude/skills/sssf`).
 5. Track a per-factory owner agent record with mission statement and append-only changelog linked to git commits and TAC receipt hashes.
 6. Capture unified diffs from a running factory as backport proposals, apply them to create a new template revision, and propagate approved revisions to target factories.
 7. Provide a SQLite-backed factory-to-factory asynchronous mailbox (`send`, `inbox`, `ack`).
@@ -42,7 +42,7 @@
 
 ### Success metrics
 
-- `check-agent-cli.sh` (from `/Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh`) passes 100% of assertions against `rmf`.
+- `check-agent-cli.sh` (from `~/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh`) passes 100% of assertions against `rmf`.
 - `bama audit-cli --cli rmf --json` reports `passed: true` with 0 failures.
 - 100% of unit and integration tests in `tests/` pass via `pytest` with zero skipped security or Gate-D tests.
 - Every destructive command (`factory delete`, `backport propagate`) performs a dry-run (exit `0`, `"dry_run": true`, zero mutations) when `--yes` is omitted, and exits `3` (policy/gate blocked) when `--yes` is passed without a matching Gate-D approval.
@@ -58,9 +58,9 @@
 - **Test Runner:** `pytest`. Exact version pinned in §11.
 - **VCS & Diff Engine:** `git` CLI invoked via `subprocess.run(..., check=False)` for factory repo init, diff capture, and patch apply. Exact version pinned in §11.
 - **External Local Integrations:**
-  - SSSF skill source at `/Users/rig128gb/.aside/u/0/repos/disler/super-simple-software-factory/.claude/skills/sssf`.
-  - TAC OS CLI at `/Users/rig128gb/.rig/bin/rig-tac-os`.
-  - BAMA verifier script at `/Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh` and `~/.local/bin/bama`.
+  - SSSF skill source at `~/.aside/u/0/repos/disler/super-simple-software-factory/.claude/skills/sssf`.
+  - TAC OS CLI at `~/.rig/bin/rig-tac-os`.
+  - BAMA verifier script at `~/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh` and `~/.local/bin/bama`.
 
 ### Compatibility check
 
@@ -307,6 +307,7 @@ CREATE TABLE IF NOT EXISTS tac_missions (
 ### Conventions
 
 - **Invocation shape:** `rmf <noun> <verb> [flags] [--json]` (plus top-level `rmf status [--json]`, `rmf schema [--json]`, `rmf mcp`).
+- **Help:** `rmf help` and `rmf help --json` list every command; `rmf help <noun> [verb]` and `rmf <noun> <verb> --help` describe one noun or one command (text, or one JSON object with `--json`, CLI flag names included); unknown words exit `2`.
 - **Exit codes (BAMA contract):**
   - `0` — Success (including dry-run preview when `--yes` is omitted on destructive commands).
   - `1` — Internal/runtime/IO error (DB error, subprocess failure).
@@ -361,6 +362,7 @@ CREATE TABLE IF NOT EXISTS tac_missions (
 | `rmf tac plan` | `rmf_tac_plan` | no | no | Run `rig-tac-os plan` and record TAC mission |
 | `rmf tac ship-stop` | `rmf_tac_ship_stop` | no | no | Run `rig-tac-os ship-stop` gate on a mission |
 | `rmf tac run` | `rmf_tac_run` | no | no | Run `rig-tac-os run` for a planned mission |
+| `rmf tac await` | `rmf_tac_await` | no | no | Wait again for a builder that outlived the run wait limit, or an interrupted `tac run` |
 | `rmf tac verify` | `rmf_tac_verify` | no | no | Run `rig-tac-os verify` with `verifier_id != builder_id` |
 | `rmf tac receipt` | `rmf_tac_receipt` | no | no | Run `rig-tac-os receipt`, hash it, link to owner changelog |
 | `rmf tac list` | `rmf_tac_list` | yes | no | List TAC missions for a factory or all factories |
@@ -377,9 +379,9 @@ CREATE TABLE IF NOT EXISTS tac_missions (
 3. **`rmf backport propagate --id <bp_id> --targets <slug1,slug2> [--yes] [--approval-id <id>] --json`**
    - Without `--yes`: returns exit `0` dry-run showing target factories, `payload_sha256`, and files touched.
    - With `--yes`: requires approved Gate-D record matching `payload_sha256`; applies the backport's new template revision diff to each target factory, updates `factories.template_revision_id`, appends an `owner_changelogs` entry per factory, marks approval `consumed`, and exits `0`.
-4. **`rmf tac verify --mission-id <id> --verifier-id <vid> --json`**
-   - Rejects with exit `3` (`SELF_VERIFY_FORBIDDEN`) if `verifier_id.strip() == ""` or `verifier_id == mission.builder_id`.
-   - Invokes `RMF_TAC_BIN verify` (default `/Users/rig128gb/.rig/bin/rig-tac-os`), stores output JSON at `verify_path`, updates mission status to `verified` (exit `0`) or `failed` (exit `1`).
+4. **`rmf tac verify --id <mission_id> --verifier <verifier_id> --json`**
+   - Rejects with exit `3` (`SELF_VERIFY_FORBIDDEN`) if `verifier_id.strip() == ""` or `verifier_id == mission.builder_id`, without calling `rig-tac-os`.
+   - Invokes `RMF_TAC_BIN verify <run_path> --repo <factory.repo_path> --plan <plan_path>` (`RMF_TAC_BIN` defaults to the first `rig-tac-os` on `PATH`, else `~/.rig/bin/rig-tac-os`), stores the verify record it prints at `verify_path`, and sets the mission to `verified` (exit `0`) only when the done-test passed and the factory repo is unchanged, else `failed` (exit `1`, `TAC_VERIFY_FAILED`).
 
 ---
 
@@ -555,7 +557,7 @@ git rev-parse --verify step-04-template-store-revisions # expected: prints 40-ch
 #### Step 5 — Implement factory CRUD and SSSF stamping engine
 
 **Do**
-Create `src/rig_meta_factory/sssf.py` implementing `stamp_sssf(repo_path, sssf_source, dry_run=False)` which copies `RMF_SSSF_SOURCE` (default `/Users/rig128gb/.aside/u/0/repos/disler/super-simple-software-factory/.claude/skills/sssf`) into `<repo_path>/.claude/skills/sssf` and runs `uv run --python 3.12 .claude/skills/sssf/scripts/install.py` in a subprocess with `VIRTUAL_ENV` removed from `env` (and optional `xattr -dr com.apple.quarantine` best-effort guard on macOS). Create `src/rig_meta_factory/factories.py` implementing `create_factory` (stamping files from template revision, `git init -b main` + initial commit, optional SSSF stamp, state `empty_stamped`), `list_factories`, `show_factory`, `update_factory` (validating state transitions), and `delete_factory` (dry-run exit `0` without `--yes`; Gate-D check from Step 3 when `--yes` is passed). Wire `rmf factory create|list|show|update|delete` into `src/rig_meta_factory/cli.py` and `rmf schema`. Create `tests/test_factories.py` testing full CRUD, SSSF command construction/sanitized env via fake stub script, dry-run delete, Gate-D blocked delete (exit `3`), and Gate-D approved delete (exit `0`).
+Create `src/rig_meta_factory/sssf.py` implementing `stamp_sssf(repo_path, sssf_source, dry_run=False)` which copies `RMF_SSSF_SOURCE` (default `~/.aside/u/0/repos/disler/super-simple-software-factory/.claude/skills/sssf`) into `<repo_path>/.claude/skills/sssf` and runs `uv run --python 3.12 .claude/skills/sssf/scripts/install.py` in a subprocess with `VIRTUAL_ENV` removed from `env` (and optional `xattr -dr com.apple.quarantine` best-effort guard on macOS). Create `src/rig_meta_factory/factories.py` implementing `create_factory` (stamping files from template revision, `git init -b main` + initial commit, optional SSSF stamp, state `empty_stamped`), `list_factories`, `show_factory`, `update_factory` (validating state transitions), and `delete_factory` (dry-run exit `0` without `--yes`; Gate-D check from Step 3 when `--yes` is passed). Wire `rmf factory create|list|show|update|delete` into `src/rig_meta_factory/cli.py` and `rmf schema`. Create `tests/test_factories.py` testing full CRUD, SSSF command construction/sanitized env via fake stub script, dry-run delete, Gate-D blocked delete (exit `3`), and Gate-D approved delete (exit `0`).
 
 **Done when**
 - [ ] WHEN `rmf factory create` runs against an initialized template THE SYSTEM SHALL copy template files into `--dest`, initialize a git repo with an initial commit, record `state == "empty_stamped"` in `factories`, and exit `0`.
@@ -685,18 +687,33 @@ git rev-parse --verify step-09-lead-status-and-cron-registry # expected: prints 
 #### Step 10 — Implement TAC mission integration via rig-tac-os
 
 **Do**
-Create `src/rig_meta_factory/tac_bridge.py` wrapping `RMF_TAC_BIN` (default `/Users/rig128gb/.rig/bin/rig-tac-os`) via `subprocess.run`:
-- `tac_plan(factory_slug, step_name, task_text, done_test, builder_id, out_dir)` — invokes `<tac_bin> plan <task_text> --step <step_name> --done-test <done_test> --out <plan_path>` and inserts a `planned` row in `tac_missions`.
+Create `src/rig_meta_factory/tac_bridge.py` wrapping `RMF_TAC_BIN` (default `~/.rig/bin/rig-tac-os`) via `subprocess.run`:
+- `tac_plan(factory_slug, step_name, task_text, done_test, builder_id, model_route=None)` — invokes `<tac_bin> plan <task_text> --step <step_name> --done-test <done_test>` (plus `--model <model_route>` when a route is given) with no `--out` (the plan stays in rig-tac-os's own plans folder, the only place `receipt` can hash it), inserts a `planned` row in `tac_missions`, and records the file rig-tac-os prints as `plan: <path>`.
 - `tac_ship_stop(mission_id)` — invokes `<tac_bin> ship-stop --step <step_name> --plan <plan_path>` and transitions to `ship_stopped` (or exits `3` if ship-stop denies).
-- `tac_run(mission_id, no_effects=False)` — invokes `<tac_bin> run <plan_path> --repo <factory.repo_path> --wait` (plus `--no-effects` when requested) and records `run_path`, status `ran`.
-- `tac_verify(mission_id, verifier_id)` — enforces `verifier_id != mission.builder_id` (exit `3` `SELF_VERIFY_FORBIDDEN` if equal or empty), invokes `<tac_bin> verify`, records `verify_path`, status `verified` or `failed`.
-- `tac_receipt(mission_id)` — requires status `verified` (exit `3` otherwise), invokes `<tac_bin> receipt <run_path> <verify_path> --out <receipt_path>`, computes SHA-256 of `<receipt_path>`, updates `tac_missions` to `receipted`, and appends a linked `owner_changelogs` entry with `tac_receipt_sha256`.
+- `tac_run(mission_id)` — invokes `<tac_bin> run <plan_path> --repo <factory.repo_path> --wait` and records as `run_path` the run record rig-tac-os prints as `run_record: <path>` (never captured stdout), status `ran`.
+- `tac_await(mission_id, terminal)` — waits again for a builder that outlived the run wait limit (mission `failed` with a run record, or `ship_stopped` with a run record after an interrupted `tac run`); when the builder exits the mission is `ran` on that record; a terminal Orca no longer knows is `TAC_BUILDER_TERMINAL_GONE` (exit `1`).
+- `tac_verify(mission_id, verifier_id)` — enforces `verifier_id != mission.builder_id` (exit `3` `SELF_VERIFY_FORBIDDEN` if equal or empty), invokes `<tac_bin> verify <run_path> --repo <factory.repo_path> --plan <plan_path>`, records the file printed as `verify_record: <path>` at `verify_path`; status `verified` only when rig-tac-os exits `0`, prints `passed: True`, and the factory repo's `git status --porcelain` is unchanged across the call, else `failed` (exit `1`, `TAC_VERIFY_FAILED`).
+- `tac_receipt(mission_id)` — requires status `verified` (exit `3` otherwise), invokes `<tac_bin> receipt <run_path> <verify_path> --out <mission_dir>` (`--out` is a folder), computes SHA-256 of the `receipt_json:` file it writes there, updates `tac_missions` to `receipted`, and appends a linked `owner_changelogs` entry with `tac_receipt_sha256`.
 - `tac_list(factory_slug=None)`.
-Wire `rmf tac plan|ship-stop|run|verify|receipt|list` into `src/rig_meta_factory/cli.py` and `rmf schema`. Create `tests/test_tac_bridge.py` using a deterministic fake `rig-tac-os` executable in `tmp_path` (pointed to by `RMF_TAC_BIN`) to test the full `plan -> ship-stop -> run -> verify -> receipt` chain, self-verification rejection (exit `3`), and unverified-receipt rejection (exit `3`).
+Wire `rmf tac plan|ship-stop|run|await|verify|receipt|list` into `src/rig_meta_factory/cli.py` and `rmf schema`. Create `tests/test_tac_bridge.py` using a deterministic fake `rig-tac-os` executable in `tmp_path` (pointed to by `RMF_TAC_BIN`) to test the full `plan -> ship-stop -> run -> verify -> receipt` chain, self-verification rejection (exit `3`), unverified-receipt rejection (exit `3`), a failed done-test (exit `1`), a verifier that writes to the factory repo (exit `1`), a SHIP-STOP refusal (exit `3`), and a missing `run_record` (exit `1`), with a fake `orca` (on `RMF_ORCA_BIN`) that also covers an unreachable runtime and an unregistered factory repo (each exit `1`) and the builder wait (exit line found, non-zero builder exit, timeout exit `1`, re-attach with `tac await`, a terminal Orca no longer knows exit `1`), and a factory repo that is not a git repository (exit `1`).
 
 **Done when**
 - [ ] WHEN a TAC mission completes `plan -> ship-stop -> run -> verify -> receipt` with `verifier_id != builder_id` THE SYSTEM SHALL persist `receipt_sha256` on `tac_missions` and append a matching entry in `owner_changelogs`.
 - [ ] WHEN `rmf tac verify` is called with `verifier_id == builder_id` THE SYSTEM SHALL reject the call with exit code `3` and `error.code == "SELF_VERIFY_FORBIDDEN"` without invoking `rig-tac-os`.
+- [ ] WHEN `rig-tac-os verify` reports `passed: False` or exits non-zero THE SYSTEM SHALL mark the mission `failed`, keep the verify record at `verify_path`, and exit `1` with `error.code == "TAC_VERIFY_FAILED"`.
+- [ ] WHEN the verifier changes the factory repo's `git status --porcelain` THE SYSTEM SHALL mark the mission `failed` and exit `1` with `error.code == "TAC_VERIFY_FAILED"`.
+- [ ] WHEN `rig-tac-os ship-stop` denies a mission THE SYSTEM SHALL mark it `failed` and exit `3` with `error.code == "SHIP_STOP_DENIED"`.
+- [ ] WHEN `rmf tac plan` is called with `--model <route>` THE SYSTEM SHALL pass `--model <route>` to `rig-tac-os plan` so the builder runs on that route, and without the flag THE SYSTEM SHALL leave the route to `rig-tac-os` (Flash-class routes stay refused there).
+- [ ] WHEN the Orca runtime is unreachable THE SYSTEM SHALL refuse `rmf tac run` and `rmf tac verify` with exit code `1` and `error.code == "ORCA_UNAVAILABLE"` before calling `rig-tac-os`, leaving the mission status unchanged.
+- [ ] WHEN the factory repo is not registered with Orca THE SYSTEM SHALL refuse with exit code `1`, `error.code == "ORCA_WORKTREE_UNREGISTERED"` and a message that names the `orca repo add --path <repo>` command to run, leaving the mission status unchanged.
+- [ ] WHEN `rmf tac run` returns from `rig-tac-os run --wait` THE SYSTEM SHALL keep reading the builder terminal through the Orca CLI until the builder command prints its own `__BUILDER_EXIT__=<code>` line (every 5 s, up to `RMF_TAC_WAIT_SECONDS`, default 900) and report `builder.exit_code`.
+- [ ] WHEN the builder prints no exit line before the wait limit THE SYSTEM SHALL mark the mission `failed`, keep the run record path, and exit `1` with `error.code == "TAC_BUILDER_TIMEOUT"`, naming the terminal to read and the `rmf tac await` command that waits for it.
+- [ ] WHEN the builder outlives the wait limit and later prints its exit line THE SYSTEM SHALL let `rmf tac await --id <mission> --terminal <terminal>` wait for it again and move the mission from `failed` to `ran` on the run record it already has (any builder exit code: verify decides).
+- [ ] WHEN `rmf tac run` is called on a mission that already has a run record (timed out, or interrupted during the builder wait) THE SYSTEM SHALL exit `2` with `error.code == "INVALID_STATE"`, name the `rmf tac await --id <mission> --terminal <terminal>` command, and never call `rig-tac-os run` again for that mission.
+- [ ] WHEN `rmf tac await` is called on a mission left `ship_stopped` with a run record by an interrupted `tac run` THE SYSTEM SHALL wait for that builder exactly as for a timed-out mission (exited: `ran`; terminal gone: exit `1`, `TAC_BUILDER_TERMINAL_GONE`, status `failed`).
+- [ ] WHEN Orca still knows the builder terminal but reports that it has ended (`status` is `exited`) without an exit line (it was closed or killed) THE SYSTEM SHALL stop waiting at once and exit `1` with `error.code == "TAC_BUILDER_TERMINAL_GONE"` (`orca error terminal_exited_without_exit_line`), status `failed`, instead of waiting out the whole limit.
+- [ ] WHEN Orca no longer knows the builder terminal (closed, or Orca restarted) THE SYSTEM SHALL keep the mission `failed` and exit `1` with `error.code == "TAC_BUILDER_TERMINAL_GONE"`.
+- [ ] WHEN the factory repo is not a readable git repository THE SYSTEM SHALL refuse `rmf tac verify` with exit code `1` and `error.code == "FACTORY_NOT_GIT_REPO"`, leaving the mission status unchanged.
 - [ ] WHEN `rmf tac receipt` is called on a mission whose status is not `verified` THE SYSTEM SHALL reject the call with exit code `3` and `error.code == "NOT_VERIFIED"`.
 
 **Verify**
@@ -720,13 +737,13 @@ Create `src/rig_meta_factory/mcp_server.py` implementing a line-delimited stdio 
 
 **Done when**
 - [ ] WHEN an MCP client sends `initialize` and `tools/list` over stdio to `rmf mcp` THE SYSTEM SHALL return `serverInfo` and exactly one tool per command listed in `rmf schema --json`, each with valid name regex `[A-Za-z0-9_-]{1,64}` and boolean `annotations.readOnlyHint`.
-- [ ] WHEN `/Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh .venv/bin/rmf` runs THE SYSTEM SHALL exit `0` with all BAMA contract checks passing.
+- [ ] WHEN `~/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh .venv/bin/rmf` runs THE SYSTEM SHALL exit `0` with all BAMA contract checks passing.
 - [ ] WHEN `tools/call` invokes an unknown tool name THE SYSTEM SHALL return a JSON-RPC error response without crashing the stdio loop.
 
 **Verify**
 ```bash
 .venv/bin/pytest -q # expected: exit 0, all 11 test modules pass
-RMF_DB_PATH="/tmp/rmf-bama-audit.db" bash /Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh .venv/bin/rmf && rm -f /tmp/rmf-bama-audit.db* # expected: exit 0, BAMA contract checks pass
+RMF_DB_PATH="/tmp/rmf-bama-audit.db" ~/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh .venv/bin/rmf && rm -f /tmp/rmf-bama-audit.db* # expected: exit 0, BAMA contract checks pass
 ```
 
 **Checkpoint**
@@ -750,9 +767,9 @@ NOT APPLICABLE — greenfield build, no system is being replaced.
 
 - **Target platform:** macOS (Apple Silicon / arm64, zsh or bash).
 - Python, `uv`, SQLite, and `git` installed (exact verified versions in §11).
-- Local SSSF source repo at `/Users/rig128gb/.aside/u/0/repos/disler/super-simple-software-factory/.claude/skills/sssf`.
-- Local TAC OS CLI at `/Users/rig128gb/.rig/bin/rig-tac-os`.
-- Local BAMA CLI audit script at `/Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh`.
+- Local SSSF source repo at `~/.aside/u/0/repos/disler/super-simple-software-factory/.claude/skills/sssf`.
+- Local TAC OS CLI at `~/.rig/bin/rig-tac-os`.
+- Local BAMA CLI audit script at `~/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh`.
 
 ### Accounts to create first
 
@@ -763,9 +780,11 @@ NOT APPLICABLE — local-first CLI and SQLite registry; no external accounts or 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `RMF_DB_PATH` | no | `~/.rig/meta-factory/registry.db` | Path to the SQLite registry database |
-| `RMF_SSSF_SOURCE` | no | `/Users/rig128gb/.aside/u/0/repos/disler/super-simple-software-factory/.claude/skills/sssf` | Local SSSF skill directory copied during factory stamping |
-| `RMF_TAC_BIN` | no | `/Users/rig128gb/.rig/bin/rig-tac-os` | Path to the `rig-tac-os` executable |
-| `RMF_UV_BIN` | no | `/Users/rig128gb/.local/bin/uv` | Path to `uv` binary used by SSSF installer |
+| `RMF_SSSF_SOURCE` | no | `.claude/skills/sssf` in this repo | Local SSSF skill directory copied during factory stamping |
+| `RMF_TAC_BIN` | no | first `rig-tac-os` on `PATH`, else `~/.rig/bin/rig-tac-os` | Path to the `rig-tac-os` executable |
+| `RMF_TAC_WAIT_SECONDS` | no | `900` | Seconds `tac run` waits for the builder's exit line; `RMF_TAC_POLL_SECONDS` (default `5`) is the poll interval |
+| `RMF_ORCA_BIN` | no | first `orca` on `PATH` | Orca binary checked by `tac run` and `tac verify` before rig-tac-os opens its terminals; an empty string skips the check |
+| `RMF_UV_BIN` | no | first `uv` on `PATH`, else `~/.local/bin/uv` | Path to `uv` binary used by SSSF installer |
 
 ### Files that must be committed
 
@@ -800,10 +819,10 @@ fi
 
 ### Runtime
 
-- **Python:** `3.13.12` (verified locally 2026-11-23 via `/Users/rig128gb/.aside/runtime/bin/python3 --version`; zero third-party PyPI runtime dependencies — standard library only).
+- **Python:** `3.13.12` (verified locally 2026-11-23 via `~/.aside/runtime/bin/python3 --version`; zero third-party PyPI runtime dependencies — standard library only).
 - **SQLite (via Python `sqlite3`):** `3.51.0` (verified locally 2026-11-23 via `python3 -c "import sqlite3; print(sqlite3.sqlite_version)"`).
 - **git:** `2.50.1` (verified locally 2026-11-23 via `git --version`).
-- **uv:** `0.13.1` (verified locally 2026-11-23 via `/Users/rig128gb/.local/bin/uv --version`).
+- **uv:** `0.13.1` (verified locally 2026-11-23 via `~/.local/bin/uv --version`).
 
 ### Development
 
@@ -851,7 +870,7 @@ NOT APPLICABLE — local CLI and stdio MCP server with no public HTTP endpoint.
 2. **Template -> Factory -> Owner lifecycle:** `template init` -> `factory create` (with git init and optional SSSF stub) -> `owner set` -> `owner changelog-add` -> `lead status`.
 3. **Backport & Gate-D propagation:** Modify factory file -> `backport capture` -> `backport apply` (creates template v2) -> `backport propagate` dry-run -> `gate queue` + `gate approve` -> `backport propagate --yes --approval-id` updates sibling factory and appends changelog -> replay rejected with exit `3`.
 4. **Mailbox & Cron:** `mailbox send` -> `mailbox inbox --status unread` -> `mailbox ack`; `lead cron-set` -> `lead crons` -> `lead cron-remove`.
-5. **TAC mission & independent verifier:** `tac plan` -> `tac ship-stop` -> `tac run` -> `tac verify` (self-verify blocked exit `3`, distinct verifier passes) -> `tac receipt` links SHA-256 into `owner_changelogs`.
+5. **TAC mission & independent verifier:** `tac plan` -> `tac ship-stop` -> `tac run` (-> `tac await` when the builder outlives the wait limit) -> `tac verify` (self-verify blocked exit `3`, distinct verifier passes) -> `tac receipt` links SHA-256 into `owner_changelogs`.
 
 ### Test data
 
@@ -937,11 +956,11 @@ NOT APPLICABLE — headless CLI and stdio MCP server with no graphical interface
 
 | Skill | Path | When to use |
 |---|---|---|
-| `bama` | `/Users/rig128gb/.aside/u/0/skills/user/bama/SKILL.md` | Verifying BAMA CLI/MCP compliance (`check-agent-cli.sh` and `bama audit-cli`) |
-| `tac-os` | `/Users/rig128gb/.aside/u/0/skills/user/tac-os/SKILL.md` | Verifying `rig-tac-os` plan/ship-stop/run/verify/receipt integration in Step 10 |
-| `software-factory` | `/Users/rig128gb/.aside/u/0/skill-library/software-factory/SKILL.md` | Verifying SSSF stamping flow and macOS `VIRTUAL_ENV`/`xattr` guards in Step 5 |
-| `s1gate` | `/Users/rig128gb/.aside/u/0/skills/user/s1gate/SKILL.md` | Running hosted Jev gate before reporting build completion |
-| `done-claim-verification` | `/Users/rig128gb/.aside/u/0/skills/user/done-claim-verification/SKILL.md` | Independent read-back verification before closing the build |
+| `bama` | `~/.aside/u/0/skills/user/bama/SKILL.md` | Verifying BAMA CLI/MCP compliance (`check-agent-cli.sh` and `bama audit-cli`) |
+| `tac-os` | `~/.aside/u/0/skills/user/tac-os/SKILL.md` | Verifying `rig-tac-os` plan/ship-stop/run/verify/receipt integration in Step 10 |
+| `software-factory` | `~/.aside/u/0/skill-library/software-factory/SKILL.md` | Verifying SSSF stamping flow and macOS `VIRTUAL_ENV`/`xattr` guards in Step 5 |
+| `s1gate` | `~/.aside/u/0/skills/user/s1gate/SKILL.md` | Running hosted Jev gate before reporting build completion |
+| `done-claim-verification` | `~/.aside/u/0/skills/user/done-claim-verification/SKILL.md` | Independent read-back verification before closing the build |
 
 ---
 
@@ -991,7 +1010,7 @@ Local BAMA-compliant meta-factory CLI and stdio MCP server (`rmf`).
       "Bash(git tag*)",
       "Bash(git rev-parse*)",
       "Bash(uv *)",
-      "Bash(bash /Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh*)",
+      "Bash(/Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh*)",
       "Bash(bama audit-cli*)"
     ],
     "deny": [
@@ -1018,7 +1037,7 @@ After any change to `src/rig_meta_factory/cli.py`, `errors.py`, or `mcp_server.p
 
 ## Steps
 1. Run `.venv/bin/pytest -q tests/test_cli_contract.py tests/test_mcp_server.py`.
-2. Run `RMF_DB_PATH="/tmp/rmf-bama-check.db" bash /Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh .venv/bin/rmf`.
+2. Run `RMF_DB_PATH="/tmp/rmf-bama-check.db" ~/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh .venv/bin/rmf`.
 3. Clean up `/tmp/rmf-bama-check.db*`.
 
 ## Verify
@@ -1106,9 +1125,9 @@ File: `.env.example`
 
 ```dotenv
 RMF_DB_PATH=~/.rig/meta-factory/registry.db
-RMF_SSSF_SOURCE=/Users/rig128gb/.aside/u/0/repos/disler/super-simple-software-factory/.claude/skills/sssf
-RMF_TAC_BIN=/Users/rig128gb/.rig/bin/rig-tac-os
-RMF_UV_BIN=/Users/rig128gb/.local/bin/uv
+RMF_SSSF_SOURCE=~/.aside/u/0/repos/disler/super-simple-software-factory/.claude/skills/sssf
+RMF_TAC_BIN=~/.rig/bin/rig-tac-os
+RMF_UV_BIN=~/.local/bin/uv
 ```
 
 #### Resolution convention matrix
@@ -1144,7 +1163,7 @@ bash -c 'set -euo pipefail; export PATH="$HOME/.local/bin:$PATH"; if [ ! -d .git
 .venv/bin/pytest -q # expected: exit 0, all 11 test files pass
 
 # 3. BAMA CLI & MCP contract verification
-RMF_DB_PATH="/tmp/rmf-global-bama.db" bash /Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh .venv/bin/rmf && rm -f /tmp/rmf-global-bama.db* # expected: exit 0
+RMF_DB_PATH="/tmp/rmf-global-bama.db" ~/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh .venv/bin/rmf && rm -f /tmp/rmf-global-bama.db* # expected: exit 0
 
 # 4. End-to-end live binary smoke test (template -> factory -> owner -> mailbox -> lead -> Gate-D delete)
 TMP_DIR=$(mktemp -d /tmp/rmf-smoke.XXXXXX)
@@ -1172,6 +1191,20 @@ rm -rf "$TMP_DIR" # expected: exit 0
 | 2026-11-23 | Place Gate-D (Step 3) before Factory CRUD (Step 5) and Backports (Step 7) | Prevents retroactive test breakage; destructive commands enforce Gate-D from their first commit |
 | 2026-11-23 | Single-file blueprint mode (11 steps) | Meets ≤11-step threshold cleanly with 3–4 files per step and zero bundle-path config duplication |
 | 2026-11-23 | Enforce `verifier_id != builder_id` in `tac_bridge.py` | Guarantees independent verification per RIG doctrine before any TAC receipt can be generated |
+| 2026-11-23 | Tests for Steps 8–11 live in the four files §9 names (`test_mailbox.py`, `test_lead.py`, `test_tac_bridge.py`, `test_mcp_server.py`), not one merged file | Each step's Verify command must exist and pass on its own |
+| 2026-11-23 | The TAC bridge stores the record files rig-tac-os prints (`plan:`, `run_record:`, `verify_record:`, `receipt_json:`), does not redirect plans with `--out`, and checks the factory repo for verifier writes | The real `rig-tac-os verify` and `receipt` parse those JSON records; `receipt` only hashes a plan in its own plans folder; rig-tac-os checks its own repo for verifier writes, not the factory's |
+| 2026-11-23 | Portable defaults: SSSF from `.claude/skills/sssf` in this repo, `rig-tac-os` and `uv` from `PATH` then `~`; no absolute machine path in `src/` or `.env.example` | The repo is public and must run on any machine; `test_no_machine_specific_paths_in_shipped_code` fails if one returns |
+| 2026-11-23 | Blueprint lives at `blueprints/rig-meta-factory-blueprint.md`; Step 11 runs `check-agent-cli.sh` by its `zsh` shebang | the-architect blueprint home; `bash <script>` fails on the script's zsh-only syntax |
+| 2026-11-23 | §5 `tac verify` flags are `--id` and `--verifier` | Names shipped by Step 10; behaviour unchanged |
+| 2026-11-23 | `tac run` and `tac verify` check that the Orca runtime is reachable and that the factory repo is registered with Orca before calling rig-tac-os (`RMF_ORCA_BIN` selects the binary; an empty string skips the check) | rig-tac-os opens its builder and verifier with `orca terminal create --worktree path:<repo>`, which fails with `selector_not_found` for a folder Orca does not know; the first live run failed that way and the error only surfaced as a traceback |
+| 2026-11-23 | `tac run` waits for the builder command's own `__BUILDER_EXIT__=<code>` line by reading the Orca terminal (`RMF_TAC_WAIT_SECONDS`, default 900); no exit line in time is `failed` + `TAC_BUILDER_TIMEOUT` | `rig-tac-os run --wait` returned after 7 s on the first live run: `wait_for_marker` matches the marker text anywhere, and the terminal echoes the typed command, which contains it; the builder was still writing |
+| 2026-11-23 | Add `--model <route>` to `tac plan` | The pinned `rig-tac-os` route (`mimo-plan/mimo-v2.6-pro`, provider endpoint 127.0.0.1:8655) had no listener and no loaded launchd job on the laptop; a dead route leaves the builder retrying in Orca. The route stays selectable per mission; rmf never edits OMP or fleet config. |
+| 2026-11-23 | `rig-tac-os plan` takes `--model <route>` | Its help prints `[default: mimo-plan/mimo-v2.6-pro]`; `default` there is the default VALUE, not a keyword. A live plan with `--model default <route>` failed with exit 2 (`Got unexpected extra argument(s)`), which also showed that failure messages need box borders stripped. |
+| 2026-11-23 | `tac await --id --terminal` re-attaches to a builder that outlived the run wait limit (`failed` -> `ran` on the existing run record); a terminal Orca no longer knows is `TAC_BUILDER_TERMINAL_GONE`; `tac run` stores `run_path` as soon as the run record exists | Live: a local-model builder wrote the file after about 8.5 minutes and was still stepping at 15 minutes, so the 900 s limit dead-ended a mission whose builder would have finished |
+| 2026-11-23 | `tac verify` refuses a factory repo that is not a readable git repository (`FACTORY_NOT_GIT_REPO`) | Without it a non-git folder looks "unchanged" and a verifier write passes silently |
+| 2026-11-23 | `rmf help <noun> [verb]` and `rmf <noun> <verb> --help` describe one noun or one command | Both were usage errors (exit 2): only the full command list existed, which hid the hyphen-only flag names |
+| 2026-11-23 | `tac run` refuses a mission that already has a run record (exit `2`); `tac await` also serves a mission left `ship_stopped` by an interrupted run | Live on 2026-11-23: a stopped route loop deleted the file a still-running builder had written and started a second builder in the same factory, and an interrupted `tac run` left a mission in `ship_stopped` with a run record and no way to re-attach. One builder per mission; re-attach with `tac await`. |
+| 2026-11-23 | A builder terminal that Orca reports as `exited` with no exit line ends the wait at once (`TAC_BUILDER_TERMINAL_GONE`) | Live on 2026-11-23: `orca terminal read` on a closed terminal answers `ok: true` with `status: "exited"` and an empty tail, not an error, so the first version of the wait would have polled the full 900 s limit. |
 
 ### 20.4 What to build next
 
