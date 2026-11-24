@@ -12,7 +12,7 @@
       "Bash(git tag*)",
       "Bash(git rev-parse*)",
       "Bash(uv *)",
-      "Bash(bash /Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh*)",
+      "Bash(/Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh*)",
       "Bash(bama audit-cli*)"
     ],
     "deny": [

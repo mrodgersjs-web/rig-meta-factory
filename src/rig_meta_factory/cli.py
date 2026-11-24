@@ -226,6 +226,107 @@ def _find_spec(tokens: list[str]) -> tuple[CommandSpec, list[str]] | None:
     return None
 
 
+def _mode(spec: CommandSpec) -> str:
+    if spec.read_only:
+        return "read-only"
+    return "destructive: dry-run until a Gate-D item is approved" if spec.destructive else "write"
+
+
+def _command_help(spec: CommandSpec) -> tuple[str, dict[str, Any]]:
+    """Human text and JSON payload for ``rmf <command> --help``."""
+    lines = [
+        f"rmf {spec.name}",
+        f"  {spec.summary}",
+        "",
+        "Usage:",
+        f"  {spec.example}",
+        "",
+        f"Flags ({_mode(spec)}; add --json for one JSON object):",
+    ]
+    for f in spec.flags:
+        bits = [f.type, "required" if f.required else "optional"]
+        if f.choices:
+            bits.append("one of " + ", ".join(f.choices))
+        if f.default not in (None, False, ""):
+            bits.append(f"default {f.default}")
+        lines.append(f"  {f.flag:<26} {'; '.join(bits)}: {f.description or f.name}")
+    if not spec.flags:
+        lines.append("  (no flags)")
+    payload = {
+        "help": "command",
+        "command": spec.to_schema_entry(),
+        "flags": [
+            {
+                "flag": f.flag,
+                "name": f.name,
+                "type": f.type,
+                "required": f.required,
+                "description": f.description or f.name,
+                "default": f.default,
+                "choices": list(f.choices or ()),
+            }
+            for f in spec.flags
+        ],
+    }
+    return "\n".join(lines), payload
+
+
+def _help_for(words: list[str]) -> tuple[str, dict[str, Any]]:
+    """Resolve ``rmf help <words>`` to one command's help or one noun's command list."""
+    found = _find_spec(words)
+    if found is not None:
+        spec, leftover = found
+        if leftover:
+            raise UsageRmfError(f"Unexpected arguments after help: {' '.join(words)}", code="USAGE_ERROR")
+        return _command_help(spec)
+    noun = words[0]
+    if noun == "mcp":
+        text = (
+            "rmf mcp\n"
+            "  Run the stdio JSON-RPC 2.0 MCP server (initialize, tools/list, tools/call).\n\n"
+            "Usage:\n"
+            "  rmf mcp\n"
+        )
+        payload: dict[str, Any] = {
+            "help": "command",
+            "command": {
+                "name": "mcp",
+                "description": (
+                    "Run the stdio JSON-RPC 2.0 MCP server (initialize, tools/list, tools/call); "
+                    "every command is one tool named rmf_<noun>_<verb>."
+                ),
+                "example": "rmf mcp",
+                "read_only": False,
+                "readOnly": False,
+                "destructive": False,
+                "required": [],
+                "inputSchema": {"type": "object", "properties": {}, "required": []},
+            },
+            "flags": [],
+        }
+        return text, payload
+    group = [s for s in get_command_specs() if s.name.split(" ", 1)[0] == noun]
+    if not group:
+        raise UsageRmfError(f"Unknown command: {' '.join(words)}", code="USAGE_ERROR")
+    lines = [f"rmf {noun} <verb> [flags] [--json]:", ""]
+    for spec in group:
+        lines.append(f"  {spec.name:<26} [{_mode(spec)}] {spec.summary}")
+        lines.append(f"    Example: {spec.example}")
+    return "\n".join(lines), {
+        "help": "noun",
+        "noun": noun,
+        "commands": [spec.to_schema_entry() for spec in group],
+    }
+
+
+def _emit_help(helped: tuple[str, dict[str, Any]], as_json: bool) -> int:
+    if as_json:
+        return _emit_output(helped[1], as_json=True)
+    sys.stdout.write(helped[0] + "\n")
+    sys.stdout.flush()
+    return EXIT_OK
+
+
 def parse_params(spec: CommandSpec, rest: list[str]) -> dict[str, Any]:
     parser = RmfArgumentParser(prog=f"rmf {spec.name}", add_help=False)
     for f in spec.flags:
@@ -261,7 +362,7 @@ def run_command(spec: CommandSpec, params: dict[str, Any]) -> dict[str, Any]:
 def _dispatch(tokens: list[str], as_json: bool) -> int:
     if not tokens or tokens[0] in ("help", "-h", "--help"):
         if len(tokens) > 1:
-            raise UsageRmfError(f"Unexpected arguments after help: {' '.join(tokens[1:])}")
+            return _emit_help(_help_for(tokens[1:]), as_json)
         if as_json:
             return _emit_output(build_schema_manifest(), as_json=True)
         sys.stdout.write(_format_human_help() + "\n")
@@ -277,6 +378,8 @@ def _dispatch(tokens: list[str], as_json: bool) -> int:
     if found is None:
         raise UsageRmfError(f"Unknown command: {' '.join(tokens)}", code="USAGE_ERROR")
     spec, rest = found
+    if any(arg in ("-h", "--help") for arg in rest):
+        return _emit_help(_command_help(spec), as_json)
     params = parse_params(spec, rest)
     return _emit_output(run_command(spec, params), as_json=as_json)
 

@@ -11,28 +11,25 @@ from typing import Any
 
 from rig_meta_factory.errors import RuntimeRmfError, UsageRmfError
 
-DEFAULT_SSSF_SOURCE = "/Users/rig128gb/.aside/u/0/repos/disler/super-simple-software-factory/.claude/skills/sssf"
-DEFAULT_UV_BIN = "/Users/rig128gb/.local/bin/uv"
-
-
-def resolve_sssf_source() -> Path:
-    """RMF_SSSF_SOURCE, else the blueprint path if present, else the in-repo ./.claude/skills/sssf."""
-    env = os.environ.get("RMF_SSSF_SOURCE", "").strip()
-    if env:
-        return Path(env).expanduser()
-    blueprint = Path(DEFAULT_SSSF_SOURCE)
-    if blueprint.is_dir():
-        return blueprint
+def bundled_sssf_source() -> Path:
+    """SSSF skill shipped inside this repo (editable install or source checkout)."""
     return Path(__file__).resolve().parents[2] / ".claude" / "skills" / "sssf"
 
 
+def resolve_sssf_source() -> Path:
+    """RMF_SSSF_SOURCE, else the SSSF skill bundled with this repo."""
+    env = os.environ.get("RMF_SSSF_SOURCE", "").strip()
+    if env:
+        return Path(env).expanduser()
+    return bundled_sssf_source()
+
+
 def resolve_uv_bin() -> str:
+    """RMF_UV_BIN, else first ``uv`` on PATH, else ``~/.local/bin/uv``."""
     env = os.environ.get("RMF_UV_BIN", "").strip()
     if env:
         return env
-    if Path(DEFAULT_UV_BIN).exists():
-        return DEFAULT_UV_BIN
-    return shutil.which("uv") or "uv"
+    return shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
 
 
 def sanitized_env() -> dict[str, str]:

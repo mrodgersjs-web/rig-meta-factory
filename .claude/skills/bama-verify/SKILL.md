@@ -8,7 +8,7 @@ After any change to `src/rig_meta_factory/cli.py`, `errors.py`, or `mcp_server.p
 
 ## Steps
 1. Run `.venv/bin/pytest -q tests/test_cli_contract.py tests/test_mcp_server.py`.
-2. Run `RMF_DB_PATH="/tmp/rmf-bama-check.db" bash /Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh .venv/bin/rmf`.
+2. Run `RMF_DB_PATH="/tmp/rmf-bama-check.db" /Users/rig128gb/Developer/bama/skills/code/agent-cli/scripts/check-agent-cli.sh .venv/bin/rmf`.
 3. Clean up `/tmp/rmf-bama-check.db*`.
 
 ## Verify
